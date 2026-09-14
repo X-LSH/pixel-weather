@@ -81,24 +81,43 @@ export function drawText(ctx, x, y, text, color, scale = 1, tracking = 1) {
   return cx - x;
 }
 
-/** 角落信息条：单行极简，深色底板保证任何天气下都可读，又不抢画面主体 */
+function sunLine(sun, maxChars) {
+  if (!sun) return '';
+  const alt = Math.round(sun.alt);
+  const sign = alt > 0 ? '+' : '';
+  const rise = sun.rise || '--:--';
+  const set = sun.set || '--:--';
+  let s = `SUN ${sign}${alt}\u00b0 AZ ${Math.round(sun.az)}\u00b0 ${rise}-${set}`;
+  if (s.length > maxChars) s = `SUN ${sign}${alt}\u00b0 ${rise}-${set}`;
+  if (s.length > maxChars) s = `SUN ${sign}${alt}\u00b0`;
+  return s;
+}
+
+/** 角落信息条：第一行地点与天气，第二行太阳高度角/方位角与日出日落 —— 让天文链路可被肉眼验证 */
 export function drawHud(ctx, env) {
-  const { m, hud } = env;
+  const { m, hud, sun } = env;
   const scale = 1;
   const pad = 3;
-  const tempText = `${Math.round(hud.temp)}\u00b0C`;
+  const gap = 1;
   const maxChars = Math.max(6, Math.floor((m.W - 18) / (GLYPH_W + 1)));
 
-  let line = `${hud.city} ${tempText} ${hud.label}`;
-  if (line.length > maxChars) line = `${hud.city} ${tempText}`;
-  if (line.length > maxChars) line = hud.city.slice(0, maxChars);
+  const tempText = `${Math.round(hud.temp)}\u00b0C`;
+  let line1 = `${hud.city} ${tempText} ${hud.label}`;
+  if (line1.length > maxChars) line1 = `${hud.city} ${tempText}`;
+  if (line1.length > maxChars) line1 = hud.city.slice(0, maxChars);
 
-  const w = measureText(line, scale) + pad * 2;
-  const h = GLYPH_H * scale + pad * 2;
+  const line2 = sunLine(sun, maxChars);
+  const rows = line2 ? 2 : 1;
+
+  const w = Math.max(measureText(line1, scale), measureText(line2, scale)) + pad * 2;
+  const h = GLYPH_H * scale * rows + gap * (rows - 1) + pad * 2;
   const x = 5;
   const y = m.H - h - 5;
 
-  ctx.fillStyle = rgbaStr([10, 13, 24], 0.32);
+  ctx.fillStyle = rgbaStr([10, 13, 24], 0.38);
   ctx.fillRect(x, y, w, h);
-  drawText(ctx, x + pad, y + pad, line, rgbStr([228, 236, 248]), scale);
+  drawText(ctx, x + pad, y + pad, line1, rgbStr([232, 240, 252]), scale);
+  if (line2) {
+    drawText(ctx, x + pad, y + pad + GLYPH_H + gap, line2, rgbStr([148, 166, 200]), scale);
+  }
 }

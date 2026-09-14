@@ -92,8 +92,9 @@ function paintTower(ctx, t, botY, C) {
  * 雾化是向"当前天色的雾色"混合，所以同一座城市在清晨、黄昏、雨天会自动呈现不同色温。
  */
 export function drawCity(ctx, env, st) {
-  const { m, pal, night } = env;
+  const { m, pal, night, w } = env;
   const botY = m.railBottom + 3;
+  const weatherFog = clamp(w.fog, 0, 1);
   const layers = [
     { towers: st.towersFar, fog: 0.54, base: [106, 116, 142] },
     { towers: st.towersMid, fog: 0.18, base: [72, 82, 110] },
@@ -102,7 +103,8 @@ export function drawCity(ctx, env, st) {
   for (const layer of layers) {
     const baseCol = mix3(layer.base, [44, 50, 80], night * 0.88);
     const col = lit(baseCol, pal.amb, pal.light);
-    const f = (c, amt) => mix3(c, pal.fogColor, layer.fog * amt);
+    const fogAmt = clamp(layer.fog + weatherFog * 0.66, 0, 0.97);
+    const f = (c, amt) => mix3(c, pal.fogColor, fogAmt * amt);
     const C = {
       fill: rgbStr(f(col, 1)),
       roofFill: rgbStr(f(mix3(col, [0, 0, 0], 0.26), 1)),

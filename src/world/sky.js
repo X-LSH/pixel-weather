@@ -121,6 +121,34 @@ export function drawMoon(ctx, env) {
 }
 
 /** 雨的斜向拉丝需要经过风雨两步偏移，单独实现避免和别的粒子共用逻辑 */
+/**
+ * 楼群之上的阳光散射层。
+ * 太阳升到 28° 以上才会完全越过楼顶，此前本体一直被楼挡住 ——
+ * 于是日出日落那两段最美的时刻反而什么都看不到。这一层把阳光的散射画在城市之上，
+ * 高度越低散射越暖越强，日落时城市背后会透出一片橘光。
+ */
+export function drawSunGlow(ctx, env) {
+  const { sun, w } = env;
+  if (sun.alt < -9) return;
+  const vis = clamp((sun.alt + 9) / 12, 0, 1) * clamp(1 - w.cloud * 1.2, 0, 1);
+  if (vis < 0.05) return;
+
+  const low = 1 - clamp(sun.alt / 42, 0, 1);
+  const strength = 0.18 + low * 0.72;
+  const r = env.m.moonR || 7;
+  const cx = sun.x;
+  const cy = Math.min(env.m.railTop, sun.y);
+
+  const layers = [
+    [r + 20, 0.045],
+    [r + 13, 0.06],
+    [r + 7, 0.085],
+  ];
+  for (const [rr, a] of layers) {
+    disc(ctx, cx, cy, rr, rgbaStr([255, 208, 128], a * vis * strength));
+  }
+}
+
 export function drawCloudShadow(ctx, env) {
   const { m, pal, w } = env;
   if (w.cloud < 0.2) return;

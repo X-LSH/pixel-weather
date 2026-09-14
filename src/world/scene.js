@@ -1,7 +1,7 @@
 import { clamp } from '../core/math.js';
 import { buildTowers, drawCity, drawStreetLevel } from './city.js';
 import { buildRoofProps, drawGroundShadow, drawLaundry, drawPlanter, drawRailing, drawRoofGround, drawWaterTank } from './roof.js';
-import { drawCloudShadow, drawMoon, drawSky, drawStars, drawSun } from './sky.js';
+import { drawCloudShadow, drawMoon, drawSky, drawStars, drawSun, drawSunGlow } from './sky.js';
 import {
   buildCityLights,
   buildClouds,
@@ -15,6 +15,7 @@ import {
   drawRainbow,
   drawSnow,
   drawSplash,
+  drawSunSpots,
   updateLightning,
   updatePrecip,
 } from '../fx/weather.js';
@@ -49,7 +50,7 @@ export function metrics(W, H) {
 export function createWorld(W, H) {
   const m = metrics(W, H);
   const lights = buildCityLights(W, m);
-  const precip = buildPrecip(W, H);
+  const precip = buildPrecip(W, H, m);
 
   const st = {
     m,
@@ -90,15 +91,13 @@ export function drawWorld(stage, st, env) {
   drawSun(ctx, e);
 
   for (let layer = 0; layer < 3; layer++) drawCloudLayer(ctx, e, st, layer);
+  drawSunSpots(ctx, e, st);
   drawBirds(ctx, e, st);
 
   drawRainbow(ctx, e, st);
   drawStreetLevel(ctx, e, st);
   drawCity(ctx, e, st);
   drawCloudShadow(ctx, e);
-
-  drawRain(ctx, e, st, false);
-  drawSnow(ctx, e, st, false);
 
   drawRoofGround(ctx, e);
   drawGroundShadow(ctx, e);
@@ -107,9 +106,10 @@ export function drawWorld(stage, st, env) {
   drawPlanter(ctx, e);
   drawRailing(ctx, e);
   drawLaundry(ctx, e);
+  drawSunGlow(ctx, e);
 
-  drawRain(ctx, e, st, true);
-  drawSnow(ctx, e, st, true);
+  drawRain(ctx, e, st);
+  drawSnow(ctx, e, st);
   drawFog(ctx, e, st);
   drawLightning(ctx, e, st);
 }

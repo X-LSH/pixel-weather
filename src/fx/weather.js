@@ -81,24 +81,62 @@ export function buildCityLights(W, m) {
   return { lamps, cars };
 }
 
-export function buildPrecip(W, H) {
+export function buildPrecip(W, H, m) {
   const rng = makeRng(5150);
-  const mk = (n, cfg) => {
-    const arr = [];
-    for (let i = 0; i < n; i++) {
-      arr.push({
-        x: rng() * (W + 20) - 10,
-        y: rng() * H,
-        sp: cfg.sp[0] + rng() * (cfg.sp[1] - cfg.sp[0]),
-        len: cfg.len[0] + rng() * (cfg.len[1] - cfg.len[0]),
-        size: cfg.size,
-        sw: 0.5 + rng() * 2.2,
-        ph: rng() * 6.283,
-        a: 0.45 + rng() * 0.55,
-      });
-    }
-    return arr;
-  };
+
+  // 雨：1px 宽 × 3px 高的线性粒子。池子按上限 120 预生成，实际用量由强度决定
+  const rain = [];
+  for (let i = 0; i < 120; i++) {
+    rain.push({
+      x: rng() * (W + 24) - 12,
+      y: rng() * H,
+      sp: 5.2 + rng() * 2.8,
+    });
+  }
+
+  // 雪：单像素粒子，横向做正弦摆动，落地后停留 2~3 帧再消失
+  const snow = [];
+  for (let i = 0; i < 100; i++) {
+    snow.push({
+      x: rng() * (W + 20) - 10,
+      y: rng() * H,
+      sp: 0.45 + rng() * 0.8,
+      sw: 0.6 + rng() * 2.4,
+      ph: rng() * 6.283,
+      a: 0.6 + rng() * 0.4,
+      land: 0,
+    });
+  }
+
+  // 雾：不做粒子，用天空层上一组低透明度横向条纹缓慢水平漂移
+  const groundTop = m ? m.groundTop : Math.round(H * 0.8);
+  const fogBands = [];
+  for (let i = 0; i < 26; i++) {
+    fogBands.push({
+      x0: rng() * (W + 140) - 70,
+      y: Math.round(rng() * groundTop),
+      len: 30 + Math.round(rng() * 78),
+      h: 1 + Math.round(rng() * 2),
+      sp: 1.3 + rng() * 3.6,
+      a: 0.12 + rng() * 0.26,
+    });
+  }
+
+  // 晴天光斑：暖色椭圆，缓慢水平漂移，模拟阳光穿过枝叶洒下的斑
+  const skyH = m ? m.horizonY : Math.round(H * 0.6);
+  const sunSpots = [];
+  for (let i = 0; i < 5; i++) {
+    sunSpots.push({
+      x0: rng() * (W + 180) - 90,
+      y: Math.round(skyH * (0.08 + rng() * 0.78)),
+      rx: 15 + Math.round(rng() * 26),
+      ry: 6 + Math.round(rng() * 10),
+      sp: 1.1 + rng() * 2.4,
+      ph: rng() * 6.283,
+      a: 0.1 + rng() * 0.1,
+    });
+  }
+
   const splashes = [];
   for (let i = 0; i < 46; i++) {
     splashes.push({ x: rng() * W, y: rng(), ph: rng(), max: 2 + rng() * 5 });
@@ -114,14 +152,7 @@ export function buildPrecip(W, H) {
     });
   }
 
-  return {
-    rainFar: mk(210, { sp: [3.4, 5.4], len: [3, 5], size: 1 }),
-    rainNear: mk(150, { sp: [5.6, 8.4], len: [6, 10], size: 1 }),
-    snowFar: mk(190, { sp: [0.5, 0.95], len: [0, 0], size: 1 }),
-    snowNear: mk(120, { sp: [0.8, 1.5], len: [0, 0], size: 2 }),
-    splashes,
-    birds,
-  };
+  return { rain, snow, fogBands, sunSpots, splashes, birds };
 }
 
 function cloudPalette(env) {
@@ -196,109 +227,129 @@ export function drawCloudLayer(ctx, env, st, layer) {
   }
 }
 
-function advance(list, env, cfg) {
+export function updatePrecip(env, st) {
   const { m, w, dt } = env;
   const k = dt * 60;
-  for (let i = 0; i < list.length; i++) {
-    const p = list[i];
-    p.y += p.sp * cfg.fall * k;
-    p.x += w.wind * cfg.drift * k + (cfg.sway ? Math.sin(env.T * p.sw + p.ph) * cfg.sway * k : 0);
-    if (p.y > m.H + 10) {
-      p.y = -cfg.reset;
-      p.x = (p.x + m.W * 0.618) % (m.W + 20) - 10;
+
+  for (const p of st.rain) {
+    p.y += p.sp * k;
+    p.x += w.wind * 0.24 * k;
+    if (p.y > m.H + 6) {
+      p.y = -6;
+      p.x = (p.x + m.W * 0.618) % (m.W + 24) - 12;
+    }
+    if (p.x > m.W + 14) p.x -= m.W + 28;
+    if (p.x < -14) p.x += m.W + 28;
+  }
+
+  for (const p of st.snow) {
+    if (p.land > 0) {
+      p.land -= k;
+      if (p.land <= 0) {
+        p.y = -4;
+        p.x = (p.x + m.W * 0.618) % (m.W + 20) - 10;
+      }
+      continue;
+    }
+    p.y += p.sp * k;
+    p.x += Math.sin(env.T * p.sw + p.ph) * 0.55 * k + w.wind * 0.1 * k;
+    if (p.y >= m.groundTop) {
+      p.y = m.groundTop;
+      p.land = 2 + (p.ph % 2 > 1 ? 1 : 0);
     }
     if (p.x > m.W + 12) p.x -= m.W + 24;
     if (p.x < -12) p.x += m.W + 24;
   }
 }
 
-export function updatePrecip(env, st) {
-  advance(st.rainFar, env, { fall: 1, drift: 0.1, reset: 12 });
-  advance(st.rainNear, env, { fall: 1.15, drift: 0.14, reset: 14 });
-  advance(st.snowFar, env, { fall: 1, drift: 0.07, reset: 8, sway: 0.24 });
-  advance(st.snowNear, env, { fall: 1.2, drift: 0.09, reset: 10, sway: 0.36 });
-}
+const RAIN_RGB = [176, 196, 206];
+const RAIN_ALPHA = 0.26;
 
-export function drawRain(ctx, env, st, near) {
-  const { m, w, pal } = env;
-  const amount = clamp(w.precip, 0, 1);
-  if (amount < 0.04) return;
-  const arr = near ? st.rainNear : st.rainFar;
-  const count = Math.floor(arr.length * amount);
-  const col = rgbaStr(mix3(pal.fogColor, [255, 255, 255], near ? 0.62 : 0.4), near ? 0.72 : 0.46);
-  const dx = clamp(w.wind * 0.1, -0.45, 0.45);
-  const wdt = near ? 2 : 1;
+/** 雨：1px 宽 × 3px 高的线性粒子，斜向下落，数量随强度在 60~120 之间 */
+export function drawRain(ctx, env, st) {
+  const { m, w } = env;
+  const amt = clamp(w.precip, 0, 1);
+  if (amt < 0.03) return;
 
-  ctx.fillStyle = col;
-  for (let i = 0; i < count; i++) {
-    const p = arr[i];
-    const len = Math.round(p.len * (near ? 1 : 0.8));
-    const x0 = Math.round(p.x);
-    const y0 = Math.round(p.y);
-    for (let s = 0; s < len; s++) {
-      const x = Math.round(x0 + s * dx);
-      if (x < 0 || x + wdt > m.W) continue;
-      ctx.fillRect(x, y0 + s, wdt, 1);
-    }
-  }
-}
-
-export function drawSnow(ctx, env, st, near) {
-  const { m, w, pal } = env;
-  const amount = clamp(w.snow, 0, 1);
-  if (amount < 0.04) return;
-  const arr = near ? st.snowNear : st.snowFar;
-  const count = Math.floor(arr.length * amount);
-  const base = mix3(pal.fogColor, [255, 255, 255], near ? 0.86 : 0.62);
+  const count = Math.round(60 + amt * 60);
+  const dx = clamp(0.3 + w.wind * 0.18, 0.12, 0.78);
+  ctx.fillStyle = rgbaStr(RAIN_RGB, RAIN_ALPHA);
 
   for (let i = 0; i < count; i++) {
-    const p = arr[i];
+    const p = st.rain[i];
     const x = Math.round(p.x);
     const y = Math.round(p.y);
-    const s = near ? p.size + 1 : p.size;
-    if (x < 0 || x + s > m.W || y < 0 || y + s > m.H) continue;
-    ctx.fillStyle = rgbaStr(base, (near ? 1 : 0.8) * p.a);
-    ctx.fillRect(x, y, s, s);
+    if (y < -4 || y > m.H) continue;
+    ctx.fillRect(x, y, 1, 1);
+    ctx.fillRect(Math.round(x + dx), y + 1, 1, 1);
+    ctx.fillRect(Math.round(x + dx * 2), y + 2, 1, 1);
   }
 }
 
-let fogKey = '';
-let fogLines = null;
+/** 雪：单像素粒子，横向正弦摆动；落地后停留 2~3 帧再消失 */
+export function drawSnow(ctx, env, st) {
+  const { m, w } = env;
+  const amt = clamp(w.snow, 0, 1);
+  if (amt < 0.03) return;
 
-/** 雾按行连续渐变：上浓下淡。整行绘制而非分带，否则会露出明显的横向条纹 */
+  const count = Math.round(48 + amt * 52);
+  for (let i = 0; i < count; i++) {
+    const p = st.snow[i];
+    const x = Math.round(p.x);
+    const y = Math.round(p.y);
+    if (x < 0 || x >= m.W || y < -2 || y >= m.H) continue;
+    const landed = p.land > 0;
+    const a = (landed ? 0.95 : 0.72) * p.a * (0.42 + amt * 0.58);
+    ctx.fillStyle = rgbaStr([244, 248, 255], a);
+    ctx.fillRect(x, y, 1, 1);
+  }
+}
+
+function fillEllipse(ctx, cx, cy, rx, ry, color) {
+  ctx.fillStyle = color;
+  for (let dy = -ry; dy <= ry; dy++) {
+    const t = 1 - (dy * dy) / (ry * ry);
+    if (t <= 0) continue;
+    const h = Math.sqrt(t) * rx;
+    ctx.fillRect(Math.round(cx - h), Math.round(cy + dy), Math.max(1, Math.round(h * 2)), 1);
+  }
+}
+
+/** 晴天光斑：天空层上几个缓慢移动的暖色椭圆，模拟阳光穿过枝叶洒下的斑 */
+export function drawSunSpots(ctx, env, st) {
+  const { m, w, night, T } = env;
+  const clear = clamp(1 - w.cloud * 1.35 - w.precip * 1.6 - w.fog * 1.3, 0, 1);
+  if (clear < 0.2 || night > 0.45) return;
+
+  for (const s of st.sunSpots) {
+    const span = m.W + s.rx * 4;
+    const x = ((s.x0 + T * s.sp) % span + span) % span - s.rx * 2;
+    const y = s.y + Math.sin(T * 0.22 + s.ph) * 3;
+    const base = s.a * clear;
+    fillEllipse(ctx, x, y, s.rx * 1.4, s.ry * 1.6, rgbaStr([255, 222, 146], base * 0.42));
+    fillEllipse(ctx, x - s.rx * 0.18, y - 1, s.rx, s.ry, rgbaStr([255, 234, 178], base * 0.8));
+    fillEllipse(ctx, x - s.rx * 0.3, y - 2, s.rx * 0.55, s.ry * 0.5, rgbaStr([255, 246, 214], base));
+  }
+}
+
+/** 雾：不做粒子，而是在天空层叠一组低透明度横向条纹，缓慢水平漂移 */
 export function drawFog(ctx, env, st) {
-  const { m, pal, w } = env;
+  const { m, pal, w, T } = env;
   const fog = clamp(w.fog, 0, 1);
-  const base = 0.05 + fog * 0.62 + w.precip * 0.1;
-  if (base < 0.006) return;
-  const col = mix3(pal.fogColor, [255, 255, 255], 0.12);
+  if (fog < 0.04) return;
+  const col = mix3(pal.fogColor, [255, 255, 255], 0.1);
 
-  const key = `${col[0] | 0},${col[1] | 0},${col[2] | 0},${base.toFixed(3)},${m.H}`;
-  if (key !== fogKey) {
-    fogKey = key;
-    fogLines = [];
-    for (let y = 0; y < m.H; y++) {
-      const a = base * (1 - (y / m.H) * 0.66);
-      fogLines.push(a < 0.005 ? null : rgbaStr(col, a));
-    }
+  // 浓雾时整体压一层，保证远景真的被吃掉
+  if (fog > 0.25) {
+    ctx.fillStyle = rgbaStr(col, (fog - 0.25) * 0.52);
+    ctx.fillRect(0, 0, m.W, m.H);
   }
 
-  for (let y = 0; y < m.H; y++) {
-    const c = fogLines[y];
-    if (!c) continue;
-    ctx.fillStyle = c;
-    ctx.fillRect(0, y, m.W, 1);
-  }
-
-  if (fog > 0.28) {
-    const drift = env.T * 3.4;
-    ctx.fillStyle = rgbaStr(mix3(col, [255, 255, 255], 0.2), (fog - 0.28) * 0.15);
-    for (let i = 0; i < 5; i++) {
-      const span = m.W + 130;
-      const band = ((drift * (0.4 + i * 0.13) + i * 61) % span + span) % span - 65;
-      const y = Math.round(m.horizonY - 4 + i * 6);
-      ctx.fillRect(Math.round(band), y, Math.max(10, 100 - i * 11), 2);
-    }
+  for (const b of st.fogBands) {
+    const span = m.W + b.len * 2;
+    const x = ((b.x0 + T * b.sp) % span + span) % span - b.len;
+    ctx.fillStyle = rgbaStr(col, b.a * fog * 1.7);
+    ctx.fillRect(Math.round(x), b.y, b.len, b.h);
   }
 }
 

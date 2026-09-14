@@ -29,6 +29,8 @@ let forecast = { hourly: [], daily: [] };
 let panelOpen = false;
 let panelT = 0;
 let dayFlag = true;
+let lastSun = null;
+let sunTimes = { rise: null, set: null };
 
 function hideBoot() {
   if (bootDone) return;
@@ -68,6 +70,22 @@ function buildEnv(dt) {
 
   const pal = applyWeather(sampleSky(sunPos.alt), weather.cur);
   const night = clamp((8 - sunPos.alt) / 10, 0, 1);
+
+  lastSun = {
+    alt: Math.round(sunPos.alt * 10) / 10,
+    az: Math.round(sunPos.az),
+    x: Math.round(screenX(sunPos.az, m.W)),
+    y: Math.round(screenY(sunPos.alt, m)),
+    moonAlt: Math.round(moonPos.alt * 10) / 10,
+    phase: Math.round(phase * 100) / 100,
+    night: Math.round(night * 100) / 100,
+    zenith: pal.zen.map((v) => Math.round(v)),
+    horizon: pal.hor.map((v) => Math.round(v)),
+    lat: place.lat,
+    lon: place.lon,
+    rise: sunTimes.rise,
+    set: sunTimes.set,
+  };
 
   return {
     st: world,
@@ -134,6 +152,7 @@ async function refresh(initial) {
     weather.set(adjustForTemp(decoded, data.temp), { temp: data.temp, offline: false });
     weather.set({ wind: data.wind });
     forecast = { hourly: data.hourly || [], daily: data.daily || [] };
+    sunTimes = { rise: data.sunrise, set: data.sunset };
     dayFlag = data.isDay !== false;
     lastFetch = Date.now();
   } catch (e) {
@@ -256,6 +275,7 @@ window.__pixelWeather = {
       weather: { cur: { ...weather.cur }, label: weather.label, temp: weather.temp, offline: weather.offline },
       layout: { W: stage.W, H: stage.H, portrait: stage.portrait },
       metrics: { ...world.m },
+      sun: lastSun,
     };
   },
 };
