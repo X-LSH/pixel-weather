@@ -7,12 +7,14 @@ import {
   buildClouds,
   buildPrecip,
   buildStars,
+  drawBirds,
   drawCloudLayer,
   drawFog,
   drawLightning,
   drawRain,
   drawRainbow,
   drawSnow,
+  drawSplash,
   updateLightning,
   updatePrecip,
 } from '../fx/weather.js';
@@ -88,6 +90,7 @@ export function drawWorld(stage, st, env) {
   drawSun(ctx, e);
 
   for (let layer = 0; layer < 3; layer++) drawCloudLayer(ctx, e, st, layer);
+  drawBirds(ctx, e, st);
 
   drawRainbow(ctx, e, st);
   drawStreetLevel(ctx, e, st);
@@ -99,6 +102,7 @@ export function drawWorld(stage, st, env) {
 
   drawRoofGround(ctx, e);
   drawGroundShadow(ctx, e);
+  drawSplash(ctx, e, st);
   drawWaterTank(ctx, e);
   drawPlanter(ctx, e);
   drawRailing(ctx, e);

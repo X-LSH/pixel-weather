@@ -49,30 +49,40 @@ export function buildTowers(seed, W, m, cfg) {
   return towers;
 }
 
-function paintTower(ctx, t, botY, fill, roofFill, edgeFill, sunFill) {
+function paintTower(ctx, t, botY, C) {
   const h = botY - t.top;
-  ctx.fillStyle = fill;
+
+  ctx.fillStyle = C.line;
+  ctx.fillRect(t.x - 1, t.top - 1, t.w + 2, h + 1);
+
+  ctx.fillStyle = C.fill;
   ctx.fillRect(t.x, t.top, t.w, h);
 
-  ctx.fillStyle = sunFill;
+  ctx.fillStyle = C.sunFill;
   ctx.fillRect(t.x, t.top, 1, h);
-  ctx.fillStyle = edgeFill;
+  ctx.fillStyle = C.edgeFill;
   ctx.fillRect(t.x + t.w - 1, t.top, 1, h);
 
-  ctx.fillStyle = roofFill;
+  if (t.wins.length) {
+    ctx.fillStyle = C.winDay;
+    for (const w of t.wins) ctx.fillRect(w.x, w.y, 2, 2);
+  }
+
+  ctx.fillStyle = C.roofFill;
   if (t.bulk) {
     ctx.fillRect(t.x + Math.round(t.w * 0.28), t.top - 4, Math.max(2, Math.round(t.w * 0.44)), 4);
   } else if (t.tank) {
     ctx.fillRect(t.x + Math.round(t.w * 0.2), t.top - 5, Math.max(2, Math.round(t.w * 0.32)), 3);
     ctx.fillRect(t.x + Math.round(t.w * 0.58), t.top - 3, Math.max(2, Math.round(t.w * 0.22)), 2);
   } else if (t.step) {
-    ctx.fillRect(t.x + 2, t.top - 3, t.w - 4, 3);
+    ctx.fillRect(t.x + 2, t.top - 3, Math.max(2, t.w - 4), 3);
     ctx.fillRect(t.x + 5, t.top - 6, Math.max(2, t.w - 10), 3);
   } else {
     ctx.fillRect(t.x, t.top - 1, t.w, 1);
   }
   if (t.antenna) {
     const ah = Math.max(4, Math.round(t.h * 0.05));
+    ctx.fillStyle = C.edgeFill;
     ctx.fillRect(t.x + Math.round(t.w * 0.68), t.top - ah, 1, ah);
   }
 }
@@ -92,12 +102,16 @@ export function drawCity(ctx, env, st) {
   for (const layer of layers) {
     const baseCol = mix3(layer.base, [44, 50, 80], night * 0.88);
     const col = lit(baseCol, pal.amb, pal.light);
-    const fill = rgbStr(mix3(col, pal.fogColor, layer.fog));
-    const roofFill = rgbStr(mix3(mix3(col, [0, 0, 0], 0.24), pal.fogColor, layer.fog));
-    const edgeFill = rgbStr(mix3(mix3(col, [0, 0, 0], 0.4), pal.fogColor, layer.fog));
-    const sunFill = rgbStr(mix3(mix3(col, [255, 255, 255], 0.14), pal.fogColor, layer.fog));
-
-    for (const t of layer.towers) paintTower(ctx, t, botY, fill, roofFill, edgeFill, sunFill);
+    const f = (c, amt) => mix3(c, pal.fogColor, layer.fog * amt);
+    const C = {
+      fill: rgbStr(f(col, 1)),
+      roofFill: rgbStr(f(mix3(col, [0, 0, 0], 0.26), 1)),
+      edgeFill: rgbStr(f(mix3(col, [0, 0, 0], 0.44), 1)),
+      sunFill: rgbStr(f(mix3(col, [255, 255, 255], 0.18), 1)),
+      line: rgbStr(f(mix3(col, [0, 0, 0], 0.5), 0.72)),
+      winDay: rgbStr(f(mix3(col, [0, 0, 0], 0.54), 0.75)),
+    };
+    for (const t of layer.towers) paintTower(ctx, t, botY, C);
   }
 
   if (night > 0.06) {

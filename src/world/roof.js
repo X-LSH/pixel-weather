@@ -1,4 +1,5 @@
-import { clamp, lit, mix3, rgbStr, rgbaStr, makeRng } from '../core/math.js';
+import { clamp, makeRng, mix3, rgbaStr, rgbStr } from '../core/math.js';
+import { box, disc, mats, sunSide } from '../core/pixel.js';
 
 export function buildRoofProps(seed, m) {
   const rng = makeRng(seed ^ 0x5bf03635);
@@ -22,10 +23,10 @@ export function buildRoofProps(seed, m) {
     items: [],
   };
   const colors = [
-    [242, 240, 232],
-    [186, 212, 234],
-    [240, 204, 206],
-    [222, 228, 214],
+    [246, 244, 236],
+    [188, 214, 236],
+    [242, 206, 208],
+    [226, 230, 216],
   ];
   const slots = [0.12, 0.36, 0.6, 0.84];
   for (let i = 0; i < slots.length; i++) {
@@ -38,57 +39,82 @@ export function buildRoofProps(seed, m) {
     });
   }
 
-  st.tiles = { step: Math.max(22, Math.round(m.W / 11)) };
+  // 地面斑驳必须先算好：否则每帧重算会闪烁
+  st.speckles = [];
+  const count = Math.round(m.W * 0.85);
+  for (let i = 0; i < count; i++) {
+    st.speckles.push({
+      x: Math.round(rng() * m.W),
+      y: Math.round(m.groundTop + rng() * (m.H - m.groundTop)),
+      d: rng() < 0.5,
+    });
+  }
+
   return st;
 }
 
-/** 天台地面：压暗、稀疏接缝、靠栏杆处落一道阴影，让它退到背景里去 */
+/** 天台地面：错缝砖砌 + 近大远小的伪透视 + 斑驳，比纯色块多出十倍的材质信息 */
 export function drawRoofGround(ctx, env) {
   const { m, pal, night, roof, w } = env;
-  const base = mix3([106, 102, 96], [46, 48, 64], night * 0.86);
-  const near = mix3([74, 72, 70], [28, 30, 44], night * 0.9);
+  const groundH = m.H - m.groundTop;
   const rows = 3;
+  const base = mix3([132, 124, 112], [42, 46, 64], night * 0.86);
 
+  const weights = [0.22, 0.32, 0.46];
+  let acc = 0;
   for (let r = 0; r < rows; r++) {
-    const y0 = Math.round(m.groundTop + ((m.H - m.groundTop) * r) / rows);
-    const y1 = Math.round(m.groundTop + ((m.H - m.groundTop) * (r + 1)) / rows);
-    const t = r / (rows - 1 || 1);
-    ctx.fillStyle = rgbStr(lit(mix3(base, near, t), pal.amb, pal.light));
-    ctx.fillRect(0, y0, m.W, y1 - y0 + 1);
+    const y0 = m.groundTop + Math.round(groundH * acc);
+    acc += weights[r];
+    const y1 = m.groundTop + Math.round(groundH * acc);
+    const rh = Math.max(2, y1 - y0);
+    const depth = r / Math.max(1, rows - 1);
+    const M = mats(mix3(base, mix3(base, [26, 28, 40], 0.3), depth), pal, { hi: 0.22, sh: 0.34, line: 0.72 });
+
+    const tileW = Math.max(6, Math.round(m.W / (17 - r * 5)));
+    const offset = (r % 2) * Math.round(tileW / 2);
+
+    for (let x = -offset; x < m.W + tileW; x += tileW) {
+      ctx.fillStyle = M.line;
+      ctx.fillRect(x, y0, 1, rh);
+      ctx.fillStyle = M.base;
+      ctx.fillRect(x + 1, y0, tileW - 1, rh);
+      ctx.fillStyle = M.hi;
+      ctx.fillRect(x + 1, y0, tileW - 1, 1);
+      ctx.fillStyle = M.sh;
+      ctx.fillRect(x + 1, y0 + rh - 1, tileW - 1, 1);
+    }
+    ctx.fillStyle = M.line;
+    ctx.fillRect(0, y0, m.W, 1);
   }
 
-  ctx.fillStyle = rgbaStr([0, 0, 0], 0.15);
-  for (let r = 1; r < rows; r++) {
-    const y = Math.round(m.groundTop + ((m.H - m.groundTop) * r) / rows);
-    ctx.fillRect(0, y, m.W, 1);
-  }
-  for (let x = roof.tiles.step; x < m.W; x += roof.tiles.step) {
-    ctx.fillRect(x, m.groundTop + 2, 1, m.H - m.groundTop - 2);
+  for (const s of roof.speckles) {
+    ctx.fillStyle = s.d ? rgbaStr([0, 0, 0], 0.16) : rgbaStr([255, 255, 255], 0.06);
+    ctx.fillRect(s.x, s.y, 1, 1);
   }
 
   const wet = clamp((w.precip - 0.22) / 0.7, 0, 1);
   if (wet > 0.01) {
-    ctx.fillStyle = rgbaStr(pal.hor, 0.16 * wet);
-    ctx.fillRect(0, m.groundTop + 3, m.W, m.H - m.groundTop - 3);
-    ctx.fillStyle = rgbaStr(mix3(pal.hor, [255, 255, 255], 0.3), 0.1 * wet);
-    ctx.fillRect(0, m.groundTop + 6, m.W, Math.round((m.H - m.groundTop) * 0.16));
+    ctx.fillStyle = rgbaStr(mix3(pal.hor, [88, 138, 200], 0.45), 0.32 * wet);
+    ctx.fillRect(0, m.groundTop + 2, m.W, m.H - m.groundTop - 2);
+    ctx.fillStyle = rgbaStr(mix3(pal.hor, [255, 255, 255], 0.45), 0.22 * wet);
+    ctx.fillRect(0, m.groundTop + 5, m.W, Math.round((m.H - m.groundTop) * 0.16));
   }
 
-  const snowAmt = clamp((w.snow - 0.25) / 0.75, 0, 1);
+  const snowAmt = clamp((w.snow - 0.2) / 0.8, 0, 1);
   if (snowAmt > 0.01) {
-    ctx.fillStyle = rgbaStr([228, 234, 246], 0.3 * snowAmt);
+    ctx.fillStyle = rgbaStr([240, 244, 252], 0.72 * snowAmt);
     ctx.fillRect(0, m.groundTop, m.W, m.H - m.groundTop);
-    ctx.fillStyle = rgbaStr([196, 208, 230], 0.22 * snowAmt);
-    ctx.fillRect(0, m.groundTop + Math.round((m.H - m.groundTop) * 0.55), m.W, m.H);
+    ctx.fillStyle = rgbaStr([198, 210, 232], 0.5 * snowAmt);
+    ctx.fillRect(0, m.groundTop + Math.round((m.H - m.groundTop) * 0.6), m.W, m.H);
   }
 
-  ctx.fillStyle = rgbaStr([0, 0, 0], 0.26);
+  ctx.fillStyle = rgbaStr([0, 0, 0], 0.34);
   ctx.fillRect(0, m.groundTop, m.W, 2);
 }
 
 /**
- * 栏杆在地面的投影。方向随太阳方位角偏转，长度按太阳高度角的余切伸缩，
- * 这是整幅画里"光影在移动"最直观的证据 —— 晴天下午影子会明显拉长并向东偏移。
+ * 栏杆投影。方向随太阳方位角偏转，长度按太阳高度角的余切伸缩，
+ * 这是整幅画里"光影在移动"最直观的证据。
  */
 export function drawGroundShadow(ctx, env) {
   const { m, sun, night, w } = env;
@@ -102,10 +128,10 @@ export function drawGroundShadow(ctx, env) {
   const len = clamp(railH / Math.tan(altRad), 3, groundH);
   const dir = -Math.sin((sun.az * Math.PI) / 180);
   const skew = dir * len * 0.55;
+  const gap = Math.max(10, Math.round(m.W / 28));
+  const bottom = m.groundTop + Math.round(groundH * 0.78);
 
-  const bottom = m.groundTop + Math.round(groundH * 0.72);
-  ctx.fillStyle = rgbaStr([0, 0, 0], 0.24 * strength);
-  const gap = Math.max(11, Math.round(m.W / 26));
+  ctx.fillStyle = rgbaStr([8, 12, 26], 0.34 * strength);
   for (let x = 3; x < m.W; x += gap) {
     for (let i = 0; i < len; i++) {
       const y = m.groundTop + 2 + i;
@@ -116,123 +142,155 @@ export function drawGroundShadow(ctx, env) {
     }
   }
 
-  ctx.fillStyle = rgbaStr([0, 0, 0], 0.18 * strength);
+  ctx.fillStyle = rgbaStr([8, 12, 26], 0.2 * strength);
   ctx.fillRect(Math.round(Math.min(0, skew)), m.groundTop + 2, Math.round(Math.abs(skew)) + m.W, 2);
 }
 
-/** 圆柱形水箱：穹顶 + 中亮侧暗的柱身 + 箍带 + 支架腿 */
+/** 不锈钢水箱：轮廓 + 柱面高光 + 箍带 + 阶梯穹顶，从"灰盒子"变成有体积的物件 */
 export function drawWaterTank(ctx, env) {
-  const { m, pal, night, sun, roof } = env;
+  const { m, pal, night, roof } = env;
   const t = roof.tank;
-  const baseY = m.groundTop + 4;
+  const side = sunSide(env);
+  const baseY = m.groundTop + 6;
   const topY = baseY - t.h;
+  const domeH = Math.max(4, Math.round(t.h * 0.17));
+  const legH = Math.max(5, Math.round(t.h * 0.13));
+  const bodyY = topY + domeH;
+  const bodyH = Math.max(8, t.h - domeH - legH);
   const x = t.x;
   const w = t.w;
 
-  const domeH = Math.max(3, Math.round(t.h * 0.15));
-  const legH = Math.max(4, Math.round(t.h * 0.11));
-  const bodyY = topY + domeH;
-  const bodyH = Math.max(6, t.h - domeH - legH);
+  const steel = mix3([182, 190, 200], [54, 60, 84], night * 0.84);
+  const M = mats(steel, pal, { hi: 0.32, sh: 0.38, line: 0.7 });
 
-  const base = mix3([172, 168, 162], [62, 66, 88], night * 0.84);
-  const cMid = lit(mix3(base, [255, 255, 255], 0.13), pal.amb, pal.light);
-  const cSide = lit(mix3(base, [0, 0, 0], 0.36), pal.amb, pal.light);
-  const cEdge = lit(mix3(base, [0, 0, 0], 0.52), pal.amb, pal.light);
+  box(ctx, M, x + 2, bodyY + bodyH - 2, 3, legH + 2, side);
+  box(ctx, M, x + w - 5, bodyY + bodyH - 2, 3, legH + 2, side);
 
-  ctx.fillStyle = rgbStr(cSide);
-  ctx.fillRect(x, bodyY, w, bodyH);
-  ctx.fillStyle = rgbStr(cMid);
-  ctx.fillRect(x + 2, bodyY, Math.max(1, w - 4), bodyH);
-  ctx.fillStyle = rgbStr(cEdge);
-  ctx.fillRect(x, bodyY, 1, bodyH);
-  ctx.fillRect(x + w - 1, bodyY, 1, bodyH);
+  box(ctx, M, x, bodyY, w, bodyH, side);
 
-  const gloss = clamp(0.1 + Math.max(0, sun.dir || 0) * 0.12, 0.04, 0.26);
-  ctx.fillStyle = rgbaStr([255, 255, 255], gloss);
-  ctx.fillRect(x + 3, bodyY + 1, Math.max(1, Math.round(w * 0.1)), bodyH - 2);
+  const glossX = side >= 0 ? x + Math.round(w * 0.6) : x + Math.round(w * 0.24);
+  ctx.fillStyle = M.hi;
+  ctx.fillRect(glossX, bodyY + 1, Math.max(2, Math.round(w * 0.14)), bodyH - 2);
 
-  ctx.fillStyle = rgbStr(cEdge);
-  ctx.fillRect(x, bodyY + Math.round(bodyH * 0.28), w, 1);
-  ctx.fillRect(x, bodyY + Math.round(bodyH * 0.7), w, 1);
+  ctx.fillStyle = M.line;
+  ctx.fillRect(x, bodyY + Math.round(bodyH * 0.3), w, 1);
+  ctx.fillRect(x, bodyY + Math.round(bodyH * 0.74), w, 1);
 
-  const dome = lit(mix3(base, [255, 255, 255], 0.2), pal.amb, pal.light);
-  ctx.fillStyle = rgbStr(dome);
-  const tiers = [0.46, 0.74, 0.94];
+  const tiers = [0.42, 0.7, 0.94];
   const tierH = Math.max(1, Math.round(domeH / 3));
   for (let i = 0; i < 3; i++) {
     const tw = Math.round(w * tiers[i]);
-    ctx.fillRect(x + Math.round((w - tw) / 2), topY + i * tierH, tw, tierH);
+    const tx = x + Math.round((w - tw) / 2);
+    box(ctx, M, tx, topY + i * tierH, tw, tierH, side, { noBottom: i < 2 });
   }
-
-  const leg = rgbStr(lit(mix3([84, 80, 78], [28, 30, 44], night * 0.9), pal.amb, pal.light));
-  ctx.fillStyle = leg;
-  ctx.fillRect(x + 1, bodyY + bodyH, 2, legH);
-  ctx.fillRect(x + w - 3, bodyY + bodyH, 2, legH);
-  ctx.fillRect(x + 1, bodyY + bodyH + Math.round(legH * 0.55), w - 2, 1);
 }
 
 const LEAF = [
-  [124, 188, 92],
-  [84, 156, 60],
-  [202, 146, 60],
-  [122, 126, 114],
+  [128, 194, 88],
+  [86, 168, 62],
+  [206, 148, 54],
+  [126, 132, 120],
 ];
 
-function leafBlob(ctx, cx, cy, r, col) {
-  ctx.fillStyle = col;
-  for (let dy = -r; dy <= r; dy++) {
-    const h = Math.round(Math.sqrt(Math.max(0, r * r - dy * dy)));
-    if (h <= 0) continue;
-    ctx.fillRect(Math.round(cx - h), Math.round(cy + dy), h * 2, 1);
-  }
-}
-
-/** 盆栽：梯形花盆 + 三团叶簇，叶色按季节换，风大时整株摆动 */
+/** 盆栽：梯形陶盆 + 三团带轮廓的叶簇，季节与风都作用在它身上 */
 export function drawPlanter(ctx, env) {
   const { m, pal, night, roof, season, wind, T } = env;
   const p = roof.planter;
-  const baseY = m.groundTop + Math.round((m.H - m.groundTop) * 0.36);
+  const side = sunSide(env);
+  const baseY = m.groundTop + Math.round((m.H - m.groundTop) * 0.46);
   const x = p.x;
   const w = p.w;
   const potH = p.h;
   const potTop = baseY - potH;
 
-  const potLight = mix3([166, 108, 88], [56, 42, 48], night * 0.82);
-  const potShade = mix3([122, 76, 62], [38, 30, 36], night * 0.82);
+  const clay = mix3([196, 112, 82], [54, 38, 44], night * 0.82);
+  const P = mats(clay, pal, { hi: 0.28, sh: 0.36, line: 0.68 });
+
   for (let i = 0; i < potH; i++) {
     const k = i / Math.max(1, potH);
-    const ww = Math.max(2, w * (1 - 0.26 * k));
-    ctx.fillStyle = rgbStr(lit(mix3(potLight, potShade, k * 0.55), pal.amb, pal.light));
-    ctx.fillRect(Math.round(x + (w - ww) / 2), potTop + i, Math.round(ww), 1);
+    const ww = Math.max(2, w * (1 - 0.3 * k));
+    const xx = x + (w - ww) / 2;
+    ctx.fillStyle = P.line;
+    ctx.fillRect(Math.round(xx) - 1, potTop + i, Math.round(ww) + 2, 1);
+    ctx.fillStyle = P.base;
+    ctx.fillRect(Math.round(xx), potTop + i, Math.round(ww), 1);
+    const hiX = side >= 0 ? Math.round(xx + ww - 2) : Math.round(xx + 1);
+    const shX = side >= 0 ? Math.round(xx + 1) : Math.round(xx + ww - 2);
+    ctx.fillStyle = P.hi;
+    ctx.fillRect(hiX, potTop + i, 2, 1);
+    ctx.fillStyle = P.sh;
+    ctx.fillRect(shX, potTop + i, 2, 1);
   }
-  ctx.fillStyle = rgbStr(lit(mix3(potShade, [0, 0, 0], 0.16), pal.amb, pal.light));
-  ctx.fillRect(x - 1, potTop, w + 2, 2);
+
+  ctx.fillStyle = P.line;
+  ctx.fillRect(x - 2, potTop - 2, w + 4, 2);
+  ctx.fillStyle = P.hi;
+  ctx.fillRect(x - 1, potTop - 1, w + 2, 1);
 
   const leafBase = LEAF[clamp(Math.round(season), 0, 3)];
-  const leafCol = rgbStr(lit(mix3(leafBase, [26, 30, 46], night * 0.86), pal.amb, pal.light));
-  const leafDark = rgbStr(lit(mix3(leafBase, [0, 0, 0], 0.3 + night * 0.36), pal.amb, pal.light));
-
+  const LM = mats(mix3(leafBase, [28, 34, 52], night * 0.86), pal, { hi: 0.32, sh: 0.36, line: 0.64 });
   const sway = Math.sin(T * 1.05) * (0.6 + wind * 1.5);
   const cx = x + w / 2;
+  const r = Math.max(2, Math.round(w * 0.27));
 
-  ctx.fillStyle = leafDark;
-  ctx.fillRect(Math.round(cx), potTop - 6, 1, 6);
+  ctx.fillStyle = LM.line;
+  ctx.fillRect(Math.round(cx), potTop - 8, 1, 8);
 
-  leafBlob(ctx, cx - Math.round(w * 0.28) + sway, potTop - 9, Math.max(2, Math.round(w * 0.22)), leafDark);
-  leafBlob(ctx, cx + Math.round(w * 0.28) + sway * 1.3, potTop - 10, Math.max(2, Math.round(w * 0.2)), leafDark);
-  leafBlob(ctx, cx + sway * 0.8, potTop - 15, Math.max(2, Math.round(w * 0.26)), leafCol);
+  disc(ctx, LM, cx - Math.round(w * 0.32) + sway, potTop - 10, r, { line: true });
+  disc(ctx, LM, cx + Math.round(w * 0.32) + sway * 1.3, potTop - 11, r - 1, { line: true });
+  disc(ctx, LM, cx + sway * 0.8, potTop - 16, r + 1, { line: true });
 }
 
-/** 晾衣绳横贯画面上部，两端出画，衣物随风摆 —— 整幅画最直观的风向标 */
+/** 立杆式金属栏杆：立柱用「暗-亮-中」三列模拟圆柱，横杆覆压其上 */
+export function drawRailing(ctx, env) {
+  const { m, pal, night } = env;
+  const side = sunSide(env);
+  const M = mats(mix3([154, 162, 180], [46, 52, 76], night * 0.84), pal, { hi: 0.36, sh: 0.38, line: 0.72 });
+
+  const topY = m.railTop;
+  const botY = m.railBottom;
+  const midY = Math.round(topY + (botY - topY) * 0.56);
+
+  const gap = Math.max(10, Math.round(m.W / 28));
+  for (let x = 3; x < m.W; x += gap) {
+    ctx.fillStyle = M.line;
+    ctx.fillRect(x - 1, topY, 3, botY - topY);
+    ctx.fillStyle = M.hi;
+    ctx.fillRect(x, topY, 1, botY - topY);
+    ctx.fillStyle = M.base;
+    ctx.fillRect(x + 1, topY, 1, botY - topY);
+  }
+
+  ctx.fillStyle = M.line;
+  ctx.fillRect(0, topY - 1, m.W, 4);
+  ctx.fillStyle = M.hi;
+  ctx.fillRect(0, topY, m.W, 1);
+  ctx.fillStyle = M.base;
+  ctx.fillRect(0, topY + 1, m.W, 2);
+
+  ctx.fillStyle = M.line;
+  ctx.fillRect(0, midY - 1, m.W, 3);
+  ctx.fillStyle = M.hi;
+  ctx.fillRect(0, midY, m.W, 1);
+  ctx.fillStyle = M.base;
+  ctx.fillRect(0, midY + 1, m.W, 1);
+
+  const C = mats(mix3([126, 120, 110], [40, 44, 62], night * 0.86), pal, { hi: 0.2, sh: 0.34, line: 0.72 });
+  box(ctx, C, -2, botY - 3, m.W + 4, 3, side, { line: false });
+  ctx.fillStyle = C.line;
+  ctx.fillRect(0, botY - 1, m.W, 2);
+}
+
+/** 晾衣绳：绳横贯画面上部，衣物上窄下宽并有领口，随风摆 */
 export function drawLaundry(ctx, env) {
   const { m, pal, night, roof, wind, T } = env;
   const l = roof.laundry;
-  const rope = rgbStr(lit(mix3([204, 200, 190], [92, 96, 118], night * 0.8), pal.amb, pal.light));
+  const R = mats(mix3([206, 202, 190], [88, 94, 116], night * 0.8), pal, { hi: 0.3, sh: 0.34, line: 0.66 });
 
   const y0 = l.ropeY;
   const y1 = l.dropY;
 
-  ctx.fillStyle = rope;
+  ctx.fillStyle = R.line;
   for (let x = 0; x < m.W; x++) {
     const t = x / m.W;
     const y = Math.round(y0 + (y1 - y0) * t + Math.sin(t * Math.PI) * l.sag);
@@ -244,42 +302,20 @@ export function drawLaundry(ctx, env) {
     const x = m.W * t;
     const y = Math.round(y0 + (y1 - y0) * t + Math.sin(t * Math.PI) * l.sag);
     const swing = Math.round(Math.sin(T * 1.5 + it.ph) * (0.6 + wind * 2.6));
-    const cloth = rgbStr(lit(mix3(it.c, [40, 46, 68], night * 0.8), pal.amb, pal.light));
-    const neck = rgbStr(lit(mix3(it.c, [0, 0, 0], 0.26 + night * 0.4), pal.amb, pal.light));
+    const C = mats(mix3(it.c, [44, 50, 72], night * 0.78), pal, { hi: 0.3, sh: 0.32, line: 0.62 });
 
-    ctx.fillStyle = cloth;
     for (let i = 0; i < it.h; i++) {
       const k = i / it.h;
-      const ww = Math.max(1, it.w * (0.7 + 0.3 * k));
-      ctx.fillRect(Math.round(x + swing - ww / 2), y + i, Math.round(ww), 1);
+      const ww = Math.max(2, it.w * (0.7 + 0.3 * k));
+      const xx = x + swing - ww / 2;
+      ctx.fillStyle = C.line;
+      ctx.fillRect(Math.round(xx) - 1, y + i, Math.round(ww) + 2, 1);
+      ctx.fillStyle = C.base;
+      ctx.fillRect(Math.round(xx), y + i, Math.round(ww), 1);
     }
-    ctx.fillStyle = neck;
+    ctx.fillStyle = C.sh;
     ctx.fillRect(Math.round(x + swing - it.w * 0.3), y, Math.max(1, Math.round(it.w * 0.6)), 2);
+    ctx.fillStyle = C.hi;
+    ctx.fillRect(Math.round(x + swing - it.w * 0.42), y + 2, 1, Math.max(1, it.h - 3));
   }
-}
-
-/** 立杆式金属栏杆，缝隙里透出城市，比实心女儿墙更有层次 */
-export function drawRailing(ctx, env) {
-  const { m, pal, night } = env;
-  const base = mix3([126, 132, 148], [54, 60, 86], night * 0.82);
-  const col = lit(base, pal.amb, pal.light);
-  const str = rgbStr(col);
-  const dark = rgbStr(mix3(col, [0, 0, 0], 0.4));
-
-  const topY = m.railTop;
-  const botY = m.railBottom;
-  const midY = Math.round(topY + (botY - topY) * 0.54);
-
-  ctx.fillStyle = str;
-  ctx.fillRect(0, topY, m.W, 2);
-  ctx.fillRect(0, midY, m.W, 1);
-
-  const gap = Math.max(11, Math.round(m.W / 26));
-  ctx.fillStyle = dark;
-  for (let x = 3; x < m.W; x += gap) {
-    ctx.fillRect(x, topY + 2, 1, botY - topY - 2);
-  }
-
-  ctx.fillStyle = rgbStr(mix3(lit(mix3([116, 112, 106], [44, 46, 62], night * 0.85), pal.amb, pal.light), [0, 0, 0], 0.12));
-  ctx.fillRect(0, botY - 3, m.W, 3);
 }

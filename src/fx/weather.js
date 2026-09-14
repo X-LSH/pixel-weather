@@ -1,4 +1,5 @@
 import { clamp, lit, mix3, rgbStr, rgbaStr, makeRng } from '../core/math.js';
+import { mats } from '../core/pixel.js';
 
 const CLOUD_SPRITE = [
   '     ####      ',
@@ -98,60 +99,100 @@ export function buildPrecip(W, H) {
     }
     return arr;
   };
+  const splashes = [];
+  for (let i = 0; i < 46; i++) {
+    splashes.push({ x: rng() * W, y: rng(), ph: rng(), max: 2 + rng() * 5 });
+  }
+  const birds = [];
+  for (let i = 0; i < 3; i++) {
+    birds.push({
+      x0: rng() * (W + 80) - 40,
+      sp: 3 + rng() * 4,
+      y: Math.round(H * (0.07 + rng() * 0.15)),
+      flap: 1.6 + rng() * 1.8,
+      ph: rng() * 6.283,
+    });
+  }
+
   return {
-    rainFar: mk(130, { sp: [3.4, 5.4], len: [3, 5], size: 1 }),
-    rainNear: mk(90, { sp: [5.6, 8.4], len: [6, 10], size: 1 }),
-    snowFar: mk(110, { sp: [0.5, 0.95], len: [0, 0], size: 1 }),
-    snowNear: mk(70, { sp: [0.8, 1.5], len: [0, 0], size: 2 }),
+    rainFar: mk(210, { sp: [3.4, 5.4], len: [3, 5], size: 1 }),
+    rainNear: mk(150, { sp: [5.6, 8.4], len: [6, 10], size: 1 }),
+    snowFar: mk(190, { sp: [0.5, 0.95], len: [0, 0], size: 1 }),
+    snowNear: mk(120, { sp: [0.8, 1.5], len: [0, 0], size: 2 }),
+    splashes,
+    birds,
   };
 }
 
-function cloudTint(env, c) {
+function cloudPalette(env) {
   const { pal, w, night } = env;
-  const bright = mix3([250, 249, 245], pal.hor, 0.3);
-  const heavy = mix3(mix3([104, 112, 132], [34, 38, 60], night), pal.hor, 0.22);
-  const dull = clamp(w.cloud * 0.55 + w.precip * 0.5 + w.fog * 0.2, 0, 1);
-  let col = mix3(bright, heavy, dull);
-  col = lit(col, clamp(pal.amb * 0.85 + 0.3, 0, 1), pal.light);
-  col = mix3(col, pal.hor, 0.16 + 0.1 * c.tint);
-  return col;
+  const dull = clamp(w.cloud * 0.5 + w.precip * 0.55 + w.fog * 0.2, 0, 1);
+  const bright = mix3([252, 253, 255], pal.hor, 0.16);
+  const stormy = mix3(mix3([120, 130, 154], [32, 38, 60], night), pal.hor, 0.24);
+  return mats(mix3(bright, stormy, dull), pal, { hi: 0.36, sh: 0.24, line: 0.48 });
+}
+
+/** 云：1px 轮廓 + 上缘高光 + 下缘暗面，把它从"色块"变成有体积的团 */
+function drawCloudShape(ctx, x, y, scale, M, vis) {
+  const rows = CLOUD_SPRITE.length;
+  const runs = [];
+  for (let r = 0; r < rows; r++) {
+    const row = CLOUD_SPRITE[r];
+    let start = -1;
+    for (let k = 0; k <= row.length; k++) {
+      const solid = k < row.length && row[k] === '#';
+      if (solid && start < 0) start = k;
+      if (!solid && start >= 0) {
+        runs.push({ r, a: start, b: k });
+        start = -1;
+      }
+    }
+  }
+  if (!runs.length) return;
+  const maxR = Math.max(...runs.map((q) => q.r));
+
+  ctx.globalAlpha = vis;
+  ctx.fillStyle = M.line;
+  for (const run of runs) {
+    ctx.fillRect(
+      Math.round(x + run.a * scale) - 1,
+      Math.round(y + run.r * scale) - 1,
+      (run.b - run.a) * scale + 2,
+      scale + 2,
+    );
+  }
+  ctx.fillStyle = M.base;
+  for (const run of runs) {
+    ctx.fillRect(Math.round(x + run.a * scale), Math.round(y + run.r * scale), (run.b - run.a) * scale, scale);
+  }
+  ctx.fillStyle = M.sh;
+  for (const run of runs) {
+    if (run.r < maxR - 1) continue;
+    ctx.fillRect(Math.round(x + run.a * scale), Math.round(y + run.r * scale), (run.b - run.a) * scale, scale);
+  }
+  ctx.fillStyle = M.hi;
+  for (const run of runs) {
+    if (run.r > 1) continue;
+    ctx.fillRect(Math.round(x + run.a * scale), Math.round(y + run.r * scale), Math.max(1, (run.b - run.a) * scale), 1);
+  }
+  ctx.globalAlpha = 1;
 }
 
 export function drawCloudLayer(ctx, env, st, layer) {
   const { m, w, T, wind } = env;
   const speedK = 1 + wind * 0.2;
+  const M = cloudPalette(env);
+
   for (let i = 0; i < st.clouds.length; i++) {
     const c = st.clouds[i];
     if (c.layer !== layer) continue;
-    const vis = clamp((w.cloud - c.need) / 0.26, 0, 1);
+    const vis = clamp((w.cloud - c.need) / 0.24, 0, 1);
     if (vis <= 0.03) continue;
 
     const spriteW = CLOUD_SPRITE[0].length * c.scale;
     const span = m.W + spriteW * 2;
     const x = ((c.x0 + T * c.sp * speedK * 6) % span + span) % span - spriteW;
-    const col = rgbStr(cloudTint(env, c));
-
-    ctx.fillStyle = col;
-    ctx.globalAlpha = vis * 0.92;
-    const rows = CLOUD_SPRITE.length;
-    for (let r = 0; r < rows; r++) {
-      const row = CLOUD_SPRITE[r];
-      let run = -1;
-      for (let k = 0; k <= row.length; k++) {
-        const solid = k < row.length && row[k] === '#';
-        if (solid && run < 0) run = k;
-        if (!solid && run >= 0) {
-          ctx.fillRect(
-            Math.round(x + run * c.scale),
-            Math.round(c.y + r * c.scale),
-            (k - run) * c.scale,
-            c.scale,
-          );
-          run = -1;
-        }
-      }
-    }
-    ctx.globalAlpha = 1;
+    drawCloudShape(ctx, x, c.y, c.scale, M, vis * 0.95);
   }
 }
 
@@ -184,8 +225,9 @@ export function drawRain(ctx, env, st, near) {
   if (amount < 0.04) return;
   const arr = near ? st.rainNear : st.rainFar;
   const count = Math.floor(arr.length * amount);
-  const col = rgbaStr(mix3(pal.fogColor, [255, 255, 255], near ? 0.42 : 0.24), near ? 0.5 : 0.3);
+  const col = rgbaStr(mix3(pal.fogColor, [255, 255, 255], near ? 0.62 : 0.4), near ? 0.72 : 0.46);
   const dx = clamp(w.wind * 0.1, -0.45, 0.45);
+  const wdt = near ? 2 : 1;
 
   ctx.fillStyle = col;
   for (let i = 0; i < count; i++) {
@@ -195,8 +237,8 @@ export function drawRain(ctx, env, st, near) {
     const y0 = Math.round(p.y);
     for (let s = 0; s < len; s++) {
       const x = Math.round(x0 + s * dx);
-      if (x < 0 || x >= m.W) continue;
-      ctx.fillRect(x, y0 + s, 1, 1);
+      if (x < 0 || x + wdt > m.W) continue;
+      ctx.fillRect(x, y0 + s, wdt, 1);
     }
   }
 }
@@ -207,15 +249,16 @@ export function drawSnow(ctx, env, st, near) {
   if (amount < 0.04) return;
   const arr = near ? st.snowNear : st.snowFar;
   const count = Math.floor(arr.length * amount);
-  const base = mix3(pal.fogColor, [255, 255, 255], near ? 0.72 : 0.5);
+  const base = mix3(pal.fogColor, [255, 255, 255], near ? 0.86 : 0.62);
 
   for (let i = 0; i < count; i++) {
     const p = arr[i];
     const x = Math.round(p.x);
     const y = Math.round(p.y);
-    if (x < 0 || x >= m.W || y < 0 || y >= m.H) continue;
-    ctx.fillStyle = rgbaStr(base, (near ? 0.9 : 0.66) * p.a);
-    ctx.fillRect(x, y, p.size, p.size);
+    const s = near ? p.size + 1 : p.size;
+    if (x < 0 || x + s > m.W || y < 0 || y + s > m.H) continue;
+    ctx.fillStyle = rgbaStr(base, (near ? 1 : 0.8) * p.a);
+    ctx.fillRect(x, y, s, s);
   }
 }
 
@@ -226,7 +269,7 @@ let fogLines = null;
 export function drawFog(ctx, env, st) {
   const { m, pal, w } = env;
   const fog = clamp(w.fog, 0, 1);
-  const base = 0.05 + fog * 0.44 + w.precip * 0.06;
+  const base = 0.05 + fog * 0.62 + w.precip * 0.1;
   if (base < 0.006) return;
   const col = mix3(pal.fogColor, [255, 255, 255], 0.12);
 
@@ -299,6 +342,46 @@ export function drawLightning(ctx, env, st) {
         ctx.fillRect(Math.round(seg.x0 + (seg.x1 - seg.x0) * t), Math.round(seg.y0 + (seg.y1 - seg.y0) * t), 1, 1);
       }
     }
+  }
+}
+
+/** 雨滴落地的涟漪：扩散即消失，雨天最能让画面"活"起来的细节之一 */
+export function drawSplash(ctx, env, st) {
+  const { m, w, pal } = env;
+  const amt = clamp(w.precip, 0, 1);
+  if (amt < 0.18) return;
+  const groundH = m.H - m.groundTop;
+  const col = mix3(pal.hor, [255, 255, 255], 0.55);
+
+  for (const s of st.splashes) {
+    const ph = (env.T * 0.9 + s.ph) % 1;
+    const r = 1 + ph * s.max;
+    const a = (1 - ph) * 0.78 * amt;
+    if (a < 0.05) continue;
+    ctx.fillStyle = rgbaStr(col, a);
+    const cx = Math.round(s.x);
+    const cy = Math.round(m.groundTop + 3 + s.y * Math.max(4, groundH - 5));
+    const rw = Math.max(1, Math.round(r * 1.7));
+    const rh = Math.max(1, Math.round(r * 0.5));
+    ctx.fillRect(cx - rw, cy, rw * 2, 1);
+    ctx.fillRect(cx - rw, cy - rh, 1, rh);
+    ctx.fillRect(cx + rw, cy - rh, 1, rh);
+  }
+}
+
+/** 晴天的飞鸟：给静态画面一个活物，只在一侧掠过 */
+export function drawBirds(ctx, env, st) {
+  const { m, night, w } = env;
+  if (night > 0.45 || w.cloud > 0.72 || w.precip > 0.25 || w.fog > 0.4) return;
+  const span = m.W + 80;
+  for (const b of st.birds) {
+    const x = (((b.x0 + env.T * b.sp) % span) + span) % span - 40;
+    const y = b.y + Math.sin(env.T * b.flap + b.ph) * 1.5;
+    const flap = Math.sin(env.T * 7 + b.ph) > 0 ? 1 : -1;
+    ctx.fillStyle = rgbaStr([54, 64, 86], 0.72);
+    ctx.fillRect(Math.round(x), Math.round(y), 1, 1);
+    ctx.fillRect(Math.round(x) - 2, Math.round(y) - flap, 2, 1);
+    ctx.fillRect(Math.round(x) + 1, Math.round(y) - flap, 2, 1);
   }
 }
 

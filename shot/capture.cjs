@@ -20,9 +20,33 @@ const GEO_BODY = JSON.stringify({
 });
 
 function makeWeatherBody(temp, code, cloud, wind) {
+  const now = new Date();
+  const iso = (d) => d.toISOString();
+  const hourly = { time: [], temperature_2m: [], weather_code: [], precipitation_probability: [] };
+  for (let i = 0; i < 24; i++) {
+    const d = new Date(now.getTime() + i * 3600e3);
+    hourly.time.push(iso(d).slice(0, 13) + ':00');
+    hourly.temperature_2m.push(Math.round(temp + Math.sin(i / 3) * 4));
+    hourly.weather_code.push([1, 1, 2, 3, 61, 63, 80, 2][i % 8]);
+    hourly.precipitation_probability.push(i % 8 === 4 ? 72 : 12);
+  }
+  const daily = {
+    time: [], weather_code: [], temperature_2m_max: [], temperature_2m_min: [], sunrise: [], sunset: [],
+  };
+  const codes = [1, 2, 61, 3, 0, 2, 71];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(now.getTime() + i * 86400e3);
+    const day = iso(d).slice(0, 10);
+    daily.time.push(day);
+    daily.weather_code.push(codes[i]);
+    daily.temperature_2m_max.push(Math.round(temp + 5 - i * 0.6));
+    daily.temperature_2m_min.push(Math.round(temp - 4 - i * 0.4));
+    daily.sunrise.push(day + 'T06:12');
+    daily.sunset.push(day + 'T18:24');
+  }
   return JSON.stringify({
     current: {
-      time: new Date().toISOString().slice(0, 16),
+      time: iso(now).slice(0, 13) + ':00',
       temperature_2m: temp,
       weather_code: code,
       cloud_cover: cloud,
@@ -30,6 +54,8 @@ function makeWeatherBody(temp, code, cloud, wind) {
       precipitation: 0,
       is_day: 1,
     },
+    hourly,
+    daily,
   });
 }
 
@@ -142,6 +168,24 @@ async function main() {
   await page.waitForTimeout(100);
   await page.screenshot({ path: path.join(OUT, '15-lightning.png') });
   console.log('shot 15-lightning');
+
+  await page.evaluate(
+    ({ h, offsetTo }) => {
+      window.__pixelWeather.setTimeOffsetMs((h - offsetTo) * 3600e3);
+      window.__pixelWeather.setWeather(
+        { cloud: 0.34, precip: 0, snow: 0, fog: 0, thunder: 0, wind: 1.6, label: 'PARTLY CLOUDY' },
+        { temp: 23 },
+      );
+      window.__pixelWeather.setPanel(true);
+    },
+    { h: 14.2, offsetTo: nowH },
+  );
+  await page.waitForTimeout(400);
+  await page.screenshot({ path: path.join(OUT, '16-forecast.png') });
+  console.log('shot 16-forecast');
+
+  await page.evaluate(() => window.__pixelWeather.setPanel(false));
+  await page.waitForTimeout(250);
 
   await page.setViewportSize({ width: 390, height: 844 });  await page.waitForTimeout(600);
   await page.evaluate(() => {

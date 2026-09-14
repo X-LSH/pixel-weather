@@ -42,31 +42,41 @@ export function drawStars(ctx, env) {
   for (let i = 0; i < st.stars.length; i++) {
     const s = st.stars[i];
     const tw = 0.5 + 0.5 * Math.sin(T * s.sp + s.ph);
-    const a = pal.star * (0.35 + 0.65 * tw) * s.b;
+    const a = clamp(pal.star * (0.4 + 0.6 * tw) * s.b * 1.4, 0, 1);
     if (a < 0.06) continue;
-    ctx.fillStyle = rgbaStr(s.warm ? [255, 244, 218] : [226, 238, 255], a);
+    const col = s.warm ? [255, 246, 212] : [228, 240, 255];
+    ctx.fillStyle = rgbaStr(col, a);
     ctx.fillRect(s.x, s.y, s.s, s.s);
+    if (s.s >= 2 && a > 0.6) {
+      ctx.fillStyle = rgbaStr(col, a * 0.4);
+      ctx.fillRect(s.x - 1, s.y, 1, 1);
+      ctx.fillRect(s.x + s.s, s.y, 1, 1);
+      ctx.fillRect(s.x, s.y - 1, 1, 1);
+      ctx.fillRect(s.x, s.y + s.s, 1, 1);
+    }
   }
 }
 
 export function drawSun(ctx, env) {
   const { sun, pal, w } = env;
   if (sun.alt < -5 || sun.outside) return;
-  const vis = clamp((sun.alt + 5) / 7, 0, 1) * (1 - clamp(w.cloud * 0.88, 0, 0.94));
+  const vis = clamp((sun.alt + 5) / 7, 0, 1) * clamp(1 - w.cloud * 1.25, 0, 1);
   if (vis < 0.04) return;
   const cx = sun.x;
   const cy = sun.y;
   const r = env.m.moonR || 7;
 
   const halo = [
-    [r + 4, 0.06],
-    [r + 2, 0.1],
-    [r + 1, 0.15],
+    [r + 10, 0.05],
+    [r + 7, 0.07],
+    [r + 5, 0.1],
+    [r + 3, 0.16],
+    [r + 1, 0.28],
   ];
-  for (const [rr, a] of halo) disc(ctx, cx, cy, rr, rgbaStr([255, 238, 178], a * vis));
+  for (const [rr, a] of halo) disc(ctx, cx, cy, rr, rgbaStr([255, 224, 136], a * vis));
 
-  const core = mix3([255, 244, 202], [255, 214, 150], clamp(1 - pal.amb * 1.4, 0, 1));
-  disc(ctx, cx, cy, r, rgbStr(core));
+  disc(ctx, cx, cy, r, rgbStr([255, 234, 150]));
+  disc(ctx, cx, cy, Math.max(1, r - 2), rgbStr([255, 252, 226]));
 }
 
 /** 按真实月相画月亮：用外缘圆与终止线椭圆的交叠逐行求亮部 */
@@ -79,11 +89,14 @@ export function drawMoon(ctx, env) {
   const cx = Math.round(moon.x);
   const cy = Math.round(moon.y);
 
-  ctx.fillStyle = rgbaStr([214, 226, 246], 0.1 * st.moonGlow);
-  disc(ctx, cx, cy, r + 4, rgbaStr([214, 226, 246], 0.09 * st.moonGlow));
-  disc(ctx, cx, cy, r + 2, rgbaStr([222, 232, 250], 0.13 * st.moonGlow));
+  disc(ctx, cx, cy, r + 7, rgbaStr([210, 224, 250], 0.05 * st.moonGlow));
+  disc(ctx, cx, cy, r + 4, rgbaStr([216, 228, 250], 0.08 * st.moonGlow));
+  disc(ctx, cx, cy, r + 2, rgbaStr([226, 236, 252], 0.13 * st.moonGlow));
 
-  const body = rgbStr([236, 240, 248]);
+  const line = rgbaStr([118, 136, 176], 0.85 * st.moonGlow);
+  const body = rgbStr([246, 250, 255]);
+  const crater = rgbaStr([192, 206, 232], 0.8 * st.moonGlow);
+
   for (let dy = -r; dy <= r; dy++) {
     const h = Math.sqrt(Math.max(0, r * r - dy * dy));
     if (h < 0.5) continue;
@@ -91,8 +104,19 @@ export function drawMoon(ctx, env) {
     const x1 = waxing ? h : -k * h;
     const w = x1 - x0;
     if (w < 0.8) continue;
+    const px = Math.round(cx + x0);
+    const pw = Math.max(1, Math.round(w));
+    ctx.fillStyle = line;
+    ctx.fillRect(px - 1, Math.round(cy + dy), pw + 2, 1);
     ctx.fillStyle = body;
-    ctx.fillRect(Math.round(cx + x0), Math.round(cy + dy), Math.max(1, Math.round(w)), 1);
+    ctx.fillRect(px, Math.round(cy + dy), pw, 1);
+  }
+
+  if (r >= 5) {
+    ctx.fillStyle = crater;
+    ctx.fillRect(cx - Math.round(r * 0.42), cy - Math.round(r * 0.34), 2, 2);
+    ctx.fillRect(cx + Math.round(r * 0.12), cy + Math.round(r * 0.18), 2, 1);
+    ctx.fillRect(cx - Math.round(r * 0.14), cy + Math.round(r * 0.5), 1, 1);
   }
 }
 
